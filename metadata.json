@@ -1,0 +1,5 @@
+{
+  "name": "雅思 A 类写作 AI 助手",
+  "description": "专门针对雅思 A 类（Academic）写作的批改 Web 应用，提供官方评分、逐句诊断和提分范文。",
+  "requestFramePermissions": []
+}
