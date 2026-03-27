@@ -60,6 +60,7 @@ export default function App() {
   const [timerActive, setTimerActive] = useState(false);
   
   const [loadingStep, setLoadingStep] = useState<0 | 1 | 2 | 3>(0);
+  const [cooldownRemaining, setCooldownRemaining] = useState(0);
   
   // Toast state
   const [toast, setToast] = useState<{ msg: string; type: 'error' | 'success' } | null>(null);
@@ -76,6 +77,16 @@ export default function App() {
     }
     return () => clearInterval(interval);
   }, [timerActive, timeLeft]);
+
+  useEffect(() => {
+    let interval: any = null;
+    if (cooldownRemaining > 0) {
+      interval = setInterval(() => {
+        setCooldownRemaining((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [cooldownRemaining]);
 
   // --- Handlers ---
   const showToast = (msg: string, type: 'error' | 'success') => {
@@ -146,23 +157,33 @@ export default function App() {
 
   // --- Step Handlers ---
   const handleStep1Click = async () => {
-    if (!validateSubmission()) return;
+    if (!validateSubmission() || loadingStep === 1 || cooldownRemaining > 0) return;
     setLoadingStep(1);
     try {
       const result = await generateOfficialScore(text, taskType);
       setCurrentResult(result);
       if (unlockedStep < 2) setUnlockedStep(2);
       showToast("官方评分生成成功！", "success");
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      showToast("生成评分失败，请稍后重试。", "error");
+      try {
+        const errData = JSON.parse(error.message);
+        if (errData.type === 'RATE_LIMIT') {
+          setCooldownRemaining(errData.retryDelay);
+          showToast(`系统忙，请在 ${errData.retryDelay} 秒后重试`, "error");
+        } else {
+          showToast("生成评分失败，请稍后重试。", "error");
+        }
+      } catch (e) {
+        showToast("生成评分失败，请稍后重试。", "error");
+      }
     } finally {
       setLoadingStep(0);
     }
   };
 
   const handleStep2Click = async () => {
-    if (unlockedStep < 2) return;
+    if (unlockedStep < 2 || loadingStep === 2 || cooldownRemaining > 0) return;
     setLoadingStep(2);
     try {
       const rawAnnotations = await generateDiagnostics(text);
@@ -171,16 +192,26 @@ export default function App() {
       if (unlockedStep < 3) setUnlockedStep(3);
       showToast("逐句划线诊断完成！", "success");
       logAnalytics('unlock_module', { module: 'step2_diagnostic' });
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      showToast("生成诊断失败，请稍后重试。", "error");
+      try {
+        const errData = JSON.parse(error.message);
+        if (errData.type === 'RATE_LIMIT') {
+          setCooldownRemaining(errData.retryDelay);
+          showToast(`系统忙，请在 ${errData.retryDelay} 秒后重试`, "error");
+        } else {
+          showToast("生成诊断失败，请稍后重试。", "error");
+        }
+      } catch (e) {
+        showToast("生成诊断失败，请稍后重试。", "error");
+      }
     } finally {
       setLoadingStep(0);
     }
   };
 
   const handleStep3Click = async () => {
-    if (unlockedStep < 3 || !currentResult) return;
+    if (unlockedStep < 3 || !currentResult || loadingStep === 3 || cooldownRemaining > 0) return;
     setLoadingStep(3);
     try {
       const modelEssay = await generateModelEssay(text, taskType, currentResult.overall_score);
@@ -188,9 +219,19 @@ export default function App() {
       if (unlockedStep < 4) setUnlockedStep(4);
       showToast("阶梯提分范文已获取！", "success");
       logAnalytics('unlock_module', { module: 'step3_sample_essay' });
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      showToast("生成范文失败，请稍后重试。", "error");
+      try {
+        const errData = JSON.parse(error.message);
+        if (errData.type === 'RATE_LIMIT') {
+          setCooldownRemaining(errData.retryDelay);
+          showToast(`系统忙，请在 ${errData.retryDelay} 秒后重试`, "error");
+        } else {
+          showToast("生成范文失败，请稍后重试。", "error");
+        }
+      } catch (e) {
+        showToast("生成范文失败，请稍后重试。", "error");
+      }
     } finally {
       setLoadingStep(0);
     }
@@ -452,14 +493,22 @@ export default function App() {
                   <h3 className="font-medium text-[#424242] mb-2">官方评分</h3>
                   <button
                     onClick={handleStep1Click}
-                    disabled={loadingStep === 1}
+                    disabled={loadingStep === 1 || cooldownRemaining > 0}
                     className={`w-full py-2.5 px-4 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
-                      unlockedStep > 1 
-                        ? 'bg-[#E1F5FE] text-[#01579B] border border-[#B3E5FC] hover:bg-[#B3E5FC]'
-                        : 'bg-[#B3E5FC] text-[#01579B] hover:bg-[#81D4FA] shadow-sm hover:shadow'
+                      loadingStep === 1 || cooldownRemaining > 0
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : unlockedStep > 1 
+                          ? 'bg-[#E1F5FE] text-[#01579B] border border-[#B3E5FC] hover:bg-[#B3E5FC]'
+                          : 'bg-[#B3E5FC] text-[#01579B] hover:bg-[#81D4FA] shadow-sm hover:shadow'
                     }`}
                   >
-                    {loadingStep === 1 ? <Loader2 className="w-4 h-4 animate-spin" /> : (unlockedStep > 1 ? '重新生成评分' : '生成官方评分')}
+                    {cooldownRemaining > 0 ? (
+                      `系统忙，请在 ${cooldownRemaining} 秒后重试`
+                    ) : loadingStep === 1 ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> AI 老师正在阅读中（预计 10 秒）...</>
+                    ) : (
+                      unlockedStep > 1 ? '重新生成评分' : '生成官方评分'
+                    )}
                   </button>
                 </div>
               </div>
@@ -478,16 +527,22 @@ export default function App() {
                   </h3>
                   <button
                     onClick={handleStep2Click}
-                    disabled={unlockedStep < 2 || loadingStep === 2}
+                    disabled={unlockedStep < 2 || loadingStep === 2 || cooldownRemaining > 0}
                     className={`w-full py-2.5 px-4 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
-                      unlockedStep > 2 
-                        ? 'bg-[#E1F5FE] text-[#01579B] border border-[#B3E5FC] hover:bg-[#B3E5FC]'
-                        : unlockedStep === 2
-                          ? 'bg-[#B3E5FC] text-[#01579B] hover:bg-[#81D4FA] shadow-sm'
-                          : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      loadingStep === 2 || cooldownRemaining > 0 || unlockedStep < 2
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : unlockedStep > 2 
+                          ? 'bg-[#E1F5FE] text-[#01579B] border border-[#B3E5FC] hover:bg-[#B3E5FC]'
+                          : 'bg-[#B3E5FC] text-[#01579B] hover:bg-[#81D4FA] shadow-sm hover:shadow'
                     }`}
                   >
-                    {loadingStep === 2 ? <Loader2 className="w-4 h-4 animate-spin" /> : (unlockedStep > 2 ? '重新诊断' : '逐句划线诊断')}
+                    {cooldownRemaining > 0 && unlockedStep >= 2 ? (
+                      `系统忙，请在 ${cooldownRemaining} 秒后重试`
+                    ) : loadingStep === 2 ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> 正在诊断中...</>
+                    ) : (
+                      unlockedStep > 2 ? '重新诊断' : '逐句划线诊断'
+                    )}
                   </button>
                 </div>
               </div>
@@ -506,16 +561,22 @@ export default function App() {
                   </h3>
                   <button
                     onClick={handleStep3Click}
-                    disabled={unlockedStep < 3 || loadingStep === 3}
+                    disabled={unlockedStep < 3 || loadingStep === 3 || cooldownRemaining > 0}
                     className={`w-full py-2.5 px-4 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
-                      unlockedStep > 3 
-                        ? 'bg-[#E1F5FE] text-[#01579B] border border-[#B3E5FC] hover:bg-[#B3E5FC]'
-                        : unlockedStep === 3
-                          ? 'bg-[#B3E5FC] text-[#01579B] hover:bg-[#81D4FA] shadow-sm'
-                          : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      loadingStep === 3 || cooldownRemaining > 0 || unlockedStep < 3
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : unlockedStep > 3 
+                          ? 'bg-[#E1F5FE] text-[#01579B] border border-[#B3E5FC] hover:bg-[#B3E5FC]'
+                          : 'bg-[#B3E5FC] text-[#01579B] hover:bg-[#81D4FA] shadow-sm hover:shadow'
                     }`}
                   >
-                    {loadingStep === 3 ? <Loader2 className="w-4 h-4 animate-spin" /> : (unlockedStep > 3 ? '重新生成范文' : '获取阶梯提分范文')}
+                    {cooldownRemaining > 0 && unlockedStep >= 3 ? (
+                      `系统忙，请在 ${cooldownRemaining} 秒后重试`
+                    ) : loadingStep === 3 ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> 正在生成范文...</>
+                    ) : (
+                      unlockedStep > 3 ? '重新生成范文' : '获取阶梯提分范文'
+                    )}
                   </button>
                 </div>
               </div>
